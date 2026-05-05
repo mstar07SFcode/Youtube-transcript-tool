@@ -1031,13 +1031,21 @@ def extract_video_id(url: str) -> Optional[str]:
     return None
 
 
-def _oembed_fallback(url: str) -> dict:
-    """Fetch basic video info via YouTube's public oEmbed API (no auth needed)."""
-    import urllib.request, json as _json
-    oembed = f"https://www.youtube.com/oembed?url={url}&format=json"
-    with urllib.request.urlopen(oembed, timeout=10) as r:
+def get_video_info(url: str) -> dict:
+    """
+    Return video metadata dict.
+    Always fetches title + channel via YouTube's public oEmbed API (no auth, works everywhere).
+    Then attempts yt-dlp as an optional enhancement for chapters + duration
+    (works locally; silently skipped on cloud servers that YouTube blocks).
+    """
+    import urllib.request as _req, json as _json
+
+    # ── Step 1: oEmbed — always works, no authentication required ──
+    oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+    with _req.urlopen(oembed_url, timeout=10) as r:
         data = _json.loads(r.read())
-    return {
+
+    result = {
         "title":        data.get("title") or "Untitled Video",
         "channel_name": data.get("author_name") or "",
         "chapters":     [],
@@ -1045,14 +1053,7 @@ def _oembed_fallback(url: str) -> dict:
         "duration_str": "",
     }
 
-
-def get_video_info(url: str) -> dict:
-    """
-    Return video metadata dict.
-    Tries yt-dlp first (gives chapters + duration on local installs).
-    Falls back to YouTube's public oEmbed API when yt-dlp is blocked
-    (e.g. on cloud servers that YouTube treats as bots).
-    """
+    # ── Step 2: yt-dlp — optional, adds chapters + duration locally ──
     try:
         import yt_dlp
         opts = {"quiet": True, "no_warnings": True, "skip_download": True}
@@ -1062,15 +1063,15 @@ def get_video_info(url: str) -> dict:
         h, rem   = divmod(duration, 3600)
         m, s     = divmod(rem, 60)
         dur_str  = (f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}") if duration else ""
-        return {
-            "title":        info.get("title") or "Untitled Video",
-            "channel_name": info.get("channel") or info.get("uploader") or "",
+        result.update({
             "chapters":     info.get("chapters") or [],
             "duration":     duration,
             "duration_str": dur_str,
-        }
-    except Exception:
-        return _oembed_fallback(url)
+        })
+    except BaseException:
+        pass  # oEmbed data is sufficient; chapters/duration simply won't appear
+
+    return result
 
 
 def get_available_transcripts(video_id: str) -> list:
