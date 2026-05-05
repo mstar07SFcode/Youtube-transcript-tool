@@ -1031,23 +1031,46 @@ def extract_video_id(url: str) -> Optional[str]:
     return None
 
 
-def get_video_info(url: str) -> dict:
-    """Return video metadata dict via yt-dlp."""
-    import yt_dlp
-    opts = {"quiet": True, "no_warnings": True, "skip_download": True}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    duration = int(info.get("duration") or 0)
-    h, rem   = divmod(duration, 3600)
-    m, s     = divmod(rem, 60)
-    dur_str  = (f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}") if duration else ""
+def _oembed_fallback(url: str) -> dict:
+    """Fetch basic video info via YouTube's public oEmbed API (no auth needed)."""
+    import urllib.request, json as _json
+    oembed = f"https://www.youtube.com/oembed?url={url}&format=json"
+    with urllib.request.urlopen(oembed, timeout=10) as r:
+        data = _json.loads(r.read())
     return {
-        "title":        info.get("title") or "Untitled Video",
-        "channel_name": info.get("channel") or info.get("uploader") or "",
-        "chapters":     info.get("chapters") or [],
-        "duration":     duration,
-        "duration_str": dur_str,
+        "title":        data.get("title") or "Untitled Video",
+        "channel_name": data.get("author_name") or "",
+        "chapters":     [],
+        "duration":     0,
+        "duration_str": "",
     }
+
+
+def get_video_info(url: str) -> dict:
+    """
+    Return video metadata dict.
+    Tries yt-dlp first (gives chapters + duration on local installs).
+    Falls back to YouTube's public oEmbed API when yt-dlp is blocked
+    (e.g. on cloud servers that YouTube treats as bots).
+    """
+    try:
+        import yt_dlp
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        duration = int(info.get("duration") or 0)
+        h, rem   = divmod(duration, 3600)
+        m, s     = divmod(rem, 60)
+        dur_str  = (f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}") if duration else ""
+        return {
+            "title":        info.get("title") or "Untitled Video",
+            "channel_name": info.get("channel") or info.get("uploader") or "",
+            "chapters":     info.get("chapters") or [],
+            "duration":     duration,
+            "duration_str": dur_str,
+        }
+    except Exception:
+        return _oembed_fallback(url)
 
 
 def get_available_transcripts(video_id: str) -> list:
